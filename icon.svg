@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" fill="#136B4F"/>
+  <g transform="translate(256 256) scale(1.15) translate(-257 -258)">
+  <!-- botella -->
+  <rect x="185" y="118" width="30" height="16" rx="4" fill="#D9930D"/>
+  <path d="M188 138H212V196C212 222 240 236 240 276V384A14 14 0 0 1 226 398H174A14 14 0 0 1 160 384V276C160 236 188 222 188 196Z" fill="#FFFFFF"/>
+  <rect x="160" y="296" width="80" height="62" fill="#D9930D"/>
+  <!-- lata -->
+  <rect x="284" y="196" width="76" height="202" rx="14" fill="#FFFFFF"/>
+  <rect x="284" y="262" width="76" height="72" fill="#C8412F"/>
+  <rect x="292" y="206" width="60" height="8" rx="4" fill="#CBD8D1"/>
+  </g>
+</svg>
