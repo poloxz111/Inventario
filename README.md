@@ -1,0 +1,2 @@
+# Inventario
+inventario para locales
