@@ -265,6 +265,14 @@ textarea.inp{min-height:9rem;resize:vertical;font-size:1rem;font-family:ui-monos
 .tbl td:first-child{overflow-wrap:anywhere}
 .tbl td small{display:block;color:var(--ink-2);font-size:.9rem}
 .tbl tfoot td{font-weight:700;border-top:2px solid var(--ink);border-bottom:0}
+.tbl.dinero{font-size:.98rem}
+.tbl.dinero th,.tbl.dinero td{padding-left:4px;padding-right:4px}
+.tbl.dinero th:first-child,.tbl.dinero td:first-child{padding-left:0}
+.tbl.dinero th:last-child,.tbl.dinero td:last-child{padding-right:0}
+.tbl.dinero th{font-size:.85rem}
+.tbl.dinero td:not(:first-child),.tbl.dinero th:not(:first-child){white-space:nowrap}
+.tbl.dinero td small{font-size:.8rem;white-space:normal}
+.tbl.dinero td:first-child{overflow-wrap:anywhere}
 .list{margin:0;padding:0;list-style:none;display:flex;flex-direction:column}
 .list li{display:flex;justify-content:space-between;gap:14px;padding:10px 0;border-bottom:1px solid var(--line)}
 .list li:last-child{border-bottom:0}
@@ -495,6 +503,18 @@ function calcItem(it) {
   return { ini: ini, rev: rev, pc: pc, v: v, vc: vc, vs: vs, quedan: ini - v, precio: precio, pCaja: pCaja, cajaP: cajaP, costo: costo, falta: falta,
     ingreso: Math.round(ing * 100) / 100, costoTotal: costo === null ? 0 : v * costo };
 }
+/* Dinero que valen q unidades a precio de venta: cada caja completa al precio de caja y las sueltas al precio individual */
+function valorQty(c, q) {
+  var cj = 0, su = q, v = 0, falta = false;
+  if (c.pc > 0) { cj = Math.floor(q / c.pc); su = q - cj * c.pc; }
+  if (cj > 0) { if (c.cajaP === null) falta = true; else v += cj * c.cajaP; }
+  if (su > 0) { if (c.precio === null) falta = true; else v += su * c.precio; }
+  return { v: Math.round(v * 100) / 100, falta: falta };
+}
+function valorItem(c) {
+  var a = valorQty(c, c.ini), b = valorQty(c, c.quedan);
+  return { hab: a.v, sob: b.v, habFalta: a.falta, sobFalta: b.falta, falta: a.falta || b.falta };
+}
 function ingresoDetalle(c) {
   if (c.v === 0) return '';
   var a = [];
@@ -503,10 +523,11 @@ function ingresoDetalle(c) {
   return a.join(' + ');
 }
 function invTotals(inv) {
-  var t = { productos: inv.items.length, vendidas: 0, sobrantes: 0, ingreso: 0, ganancia: 0, conCosto: 0, sinCosto: 0, sinPrecio: 0, sinRevisar: 0, revisados: 0, porCat: {} };
+  var t = { productos: inv.items.length, vendidas: 0, sobrantes: 0, ingreso: 0, valHab: 0, valSob: 0, sinPrecioVal: 0, ganancia: 0, conCosto: 0, sinCosto: 0, sinPrecio: 0, sinRevisar: 0, revisados: 0, porCat: {} };
   inv.items.forEach(function (it) {
     var c = calcItem(it);
     t.vendidas += c.v; t.sobrantes += c.quedan; t.ingreso += c.ingreso;
+    var vv = valorItem(c); t.valHab += vv.hab; t.valSob += vv.sob; if (vv.falta) t.sinPrecioVal++;
     if (c.rev) t.revisados++; else t.sinRevisar++;
     if (c.falta) t.sinPrecio++;
     if (c.v > 0) {
@@ -516,6 +537,7 @@ function invTotals(inv) {
     t.porCat[it.categoria] = (t.porCat[it.categoria] || 0) + c.ingreso;
   });
   t.ingreso = Math.round(t.ingreso * 100) / 100;
+  t.valHab = Math.round(t.valHab * 100) / 100; t.valSob = Math.round(t.valSob * 100) / 100;
   t.ganancia = Math.round(t.ganancia * 100) / 100;
   return t;
 }
@@ -645,13 +667,16 @@ async function initStorage() {
 }
 
 /* ================= Estado de pantalla ================= */
+/* Cómo se prefiere ver el detalle de resultados (cantidades o dinero): se recuerda en este dispositivo */
+var LS_DETALLE = 'inventario-detalle';
+function leerDetalle() { try { return localStorage.getItem(LS_DETALLE) === 'dinero' ? 'dinero' : 'cant'; } catch (e) { return 'cant'; } }
 var ui = {
   view: 'inicio', invId: null, step: 1,
   q: '', cat: 'todas', solo: false,
   editInfo: false, editProd: null, confirm: null,
   nf: { nombre: '', inicio: '', fin: '', desde: '' }, errs: {},
   pf: null, pfErr: {}, pfCtx: 'prod',
-  bib: {}, nuevos: {}, shareOpen: false,
+  bib: {}, nuevos: {}, shareOpen: false, detalle: leerDetalle(),
   restoreText: '', restoreMsg: '', restorePlan: null, showCode: false
 };
 var curInv = function () { return getInv(ui.invId); };
@@ -1015,6 +1040,45 @@ function shareCard(inv) {
     (canDownload ? '<button type="button" class="btn sec" data-act="pdf">' + ic('download') + ' Guardar PDF</button><button type="button" class="btn sec" data-act="csv">' + ic('download') + ' Guardar en Excel (CSV)</button>' : '') + '</div>' +
     '<details class="prev" id="share-det"' + (ui.shareOpen ? ' open' : '') + '><summary>Ver el resumen que se envía</summary><textarea id="share-ta" class="inp" readonly rows="14">' + esc(resumenTexto(inv)) + '</textarea></details></section>';
 }
+/* Detalle por producto: en cantidades o en dinero (se cambia con el selector de arriba) */
+function moneyCell(v, falta, unid) {
+  if (falta) return (v > 0 ? money(v) : '—') + '<small>' + (v > 0 ? 'falta un precio' : 'falta precio') + '</small>';
+  return money(v) + '<small>' + unid + '</small>';
+}
+function unidTxt(n) { return int(n) + ' unid.'; }
+function detalleCard(inv, t) {
+  var modo = ui.detalle === 'dinero' ? 'dinero' : 'cant';
+  var rows = inv.items.slice().sort(cmpRow), h;
+  h = '<section class="card" id="detalle"><h3>Detalle por producto</h3>' +
+    '<div class="seg" role="group" aria-label="Cómo ver el detalle">' +
+    '<button type="button" class="chip" data-act="detalle" data-v="cant" aria-pressed="' + (modo === 'cant') + '">En cantidades</button>' +
+    '<button type="button" class="chip" data-act="detalle" data-v="dinero" aria-pressed="' + (modo === 'dinero') + '">En dinero</button></div>';
+  if (modo === 'dinero') {
+    if (t.sinPrecioVal > 0) {
+      h += '<div class="note">' + ic('alert') + '<div><b>Falta el precio en ' + t.sinPrecioVal + ' ' + plural(t.sinPrecioVal, 'producto', 'productos') + '.</b> Su dinero no está sumado en los totales.<div class="btns"><button type="button" class="btn sec sm" data-act="step" data-s="2">Poner precios</button></div></div></div>';
+    }
+    h += '<p class="help">Todo en dinero, a precio de venta: cada caja completa al precio de la caja y las sueltas al precio individual.</p>' +
+      '<div class="scroll"><table class="tbl dinero"><thead><tr><th scope="col">Producto</th><th scope="col">Había</th><th scope="col">Vendido</th><th scope="col">Sobran</th></tr></thead><tbody>' +
+      rows.map(function (it) {
+        var c = calcItem(it), vv = valorItem(c);
+        return '<tr><td>' + esc(it.nombre) + (it.presentacion ? '<small>' + esc(it.presentacion) + '</small>' : '') + '</td>' +
+          '<td>' + moneyCell(vv.hab, vv.habFalta, unidTxt(c.ini)) + '</td>' +
+          '<td>' + moneyCell(c.ingreso, c.falta, unidTxt(c.v)) + '</td>' +
+          '<td>' + moneyCell(vv.sob, vv.sobFalta, unidTxt(c.quedan)) + '</td></tr>';
+      }).join('') +
+      '</tbody><tfoot><tr><td>Total</td><td>' + money(t.valHab) + '</td><td>' + money(t.ingreso) + '</td><td>' + money(t.valSob) + '</td></tr></tfoot></table></div>';
+  } else {
+    var tv = 0, tq = 0;
+    h += '<div class="scroll"><table class="tbl"><thead><tr><th scope="col">Producto</th><th scope="col">Había</th><th scope="col">Vendidas</th><th scope="col">Sobran</th><th scope="col">Dinero</th></tr></thead><tbody>' +
+      rows.map(function (it) {
+        var c = calcItem(it); tv += c.v; tq += c.quedan;
+        var sbd = c.pc > 0 && c.vc > 0 ? splitText(c.vc, c.vs) : '';
+        return '<tr><td>' + esc(it.nombre) + (it.presentacion ? '<small>' + esc(it.presentacion) + '</small>' : '') + '</td><td>' + c.ini + '</td><td>' + c.v + (sbd ? '<small>' + sbd + '</small>' : '') + '</td><td>' + c.quedan + '</td><td>' + (c.falta ? (c.ingreso > 0 ? money(c.ingreso) + '<small>falta un precio</small>' : '—') : money(c.ingreso)) + '</td></tr>';
+      }).join('') +
+      '</tbody><tfoot><tr><td>Total</td><td>' + int(rows.reduce(function (a, it) { return a + it.inicial; }, 0)) + '</td><td>' + int(tv) + '</td><td>' + int(tq) + '</td><td>' + money(t.ingreso) + '</td></tr></tfoot></table></div>';
+  }
+  return h + '</section>';
+}
 function vResultados(inv) {
   var t = invTotals(inv), days = diffDays(inv.inicio, inv.fin);
   if (!inv.items.length) {
@@ -1055,14 +1119,7 @@ function vResultados(inv) {
   }
   h += '</section>';
 
-  var rows = inv.items.slice().sort(cmpRow), tv = 0, tq = 0;
-  h += '<section class="card"><h3>Detalle por producto</h3><div class="scroll"><table class="tbl"><thead><tr><th scope="col">Producto</th><th scope="col">Había</th><th scope="col">Vendidas</th><th scope="col">Sobran</th><th scope="col">Dinero</th></tr></thead><tbody>' +
-    rows.map(function (it) {
-      var c = calcItem(it); tv += c.v; tq += c.quedan;
-      var sbd = c.pc > 0 && c.vc > 0 ? splitText(c.vc, c.vs) : '';
-      return '<tr><td>' + esc(it.nombre) + (it.presentacion ? '<small>' + esc(it.presentacion) + '</small>' : '') + '</td><td>' + c.ini + '</td><td>' + c.v + (sbd ? '<small>' + sbd + '</small>' : '') + '</td><td>' + c.quedan + '</td><td>' + (c.falta ? (c.ingreso > 0 ? money(c.ingreso) + '<small>falta un precio</small>' : '—') : money(c.ingreso)) + '</td></tr>';
-    }).join('') +
-    '</tbody><tfoot><tr><td>Total</td><td>' + int(rows.reduce(function (a, it) { return a + it.inicial; }, 0)) + '</td><td>' + int(tv) + '</td><td>' + int(tq) + '</td><td>' + money(t.ingreso) + '</td></tr></tfoot></table></div></section>';
+  h += detalleCard(inv, t);
 
   h += '<div class="btns">' + (inv.cerrado
     ? '<button type="button" class="btn sec" data-act="cerrar">Volver a abrir este inventario</button>'
@@ -1363,13 +1420,13 @@ function prepararRestauracion() {
 }
 function csvEscape(v) { v = String(v == null ? '' : v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }
 function invCSV(inv) {
-  var rows = [['Producto', 'Presentación', 'Tipo', 'Había', 'Vendidas (unidades)', 'Cajas vendidas', 'Sueltas vendidas', 'Sobran', 'Precio individual', 'Precio de la caja', 'Dinero vendido']];
+  var rows = [['Producto', 'Presentación', 'Tipo', 'Había', 'Vendidas (unidades)', 'Cajas vendidas', 'Sueltas vendidas', 'Sobran', 'Precio individual', 'Precio de la caja', 'Dinero vendido', 'Dinero de lo que había', 'Dinero de lo que sobra']];
   inv.items.slice().sort(cmpRow).forEach(function (it) {
     var c = calcItem(it);
-    rows.push([it.nombre, it.presentacion, it.categoria, c.ini, c.v, c.pc > 0 ? c.vc : '', c.vs, c.quedan, c.precio === null ? '' : c.precio.toFixed(2), c.pc > 0 && c.cajaP !== null ? c.cajaP.toFixed(2) : '', c.ingreso.toFixed(2)]);
+    rows.push([it.nombre, it.presentacion, it.categoria, c.ini, c.v, c.pc > 0 ? c.vc : '', c.vs, c.quedan, c.precio === null ? '' : c.precio.toFixed(2), c.pc > 0 && c.cajaP !== null ? c.cajaP.toFixed(2) : '', c.ingreso.toFixed(2), valorItem(c).habFalta ? '' : valorItem(c).hab.toFixed(2), valorItem(c).sobFalta ? '' : valorItem(c).sob.toFixed(2)]);
   });
   var t = invTotals(inv);
-  rows.push([]); rows.push(['Total vendido', '', '', '', t.vendidas, '', '', t.sobrantes, '', '', t.ingreso.toFixed(2)]);
+  rows.push([]); rows.push(['Total vendido', '', '', '', t.vendidas, '', '', t.sobrantes, '', '', t.ingreso.toFixed(2), t.valHab.toFixed(2), t.valSob.toFixed(2)]);
   rows.push(['Inventario', inv.nombre]); rows.push(['Del', inv.inicio, 'al', inv.fin]);
   return '﻿' + rows.map(function (r) { return r.map(csvEscape).join(','); }).join('\r\n');
 }
@@ -1381,11 +1438,14 @@ function resumenTexto(inv) {
   L.push('');
   L.push('*Dinero vendido: ' + money(t.ingreso) + '*');
   if (t.conCosto > 0) L.push('Ganancia: ' + money(t.ganancia));
+  L.push('Dinero de lo que había: ' + money(t.valHab));
+  L.push('Dinero de lo que sobra: ' + money(t.valSob));
   L.push('Unidades vendidas: ' + int(t.vendidas));
   L.push('Sobrantes: ' + int(t.sobrantes) + ' ' + plural(t.sobrantes, 'unidad', 'unidades'));
   var cats = CATS.filter(function (c) { return (t.porCat[c] || 0) > 0; });
   if (cats.length) L.push('Por tipo: ' + cats.map(function (c) { return c + ' ' + money(t.porCat[c]); }).join(', '));
   if (t.sinPrecio > 0) L.push('Atención: falta el precio en ' + t.sinPrecio + ' ' + plural(t.sinPrecio, 'producto', 'productos') + '; su dinero no está sumado.');
+  else if (t.sinPrecioVal > 0) L.push('Atención: falta el precio en ' + t.sinPrecioVal + ' ' + plural(t.sinPrecioVal, 'producto', 'productos') + '; su dinero no está sumado en lo que había ni en lo que sobra.');
   if (t.sinRevisar > 0) L.push('Atención: faltan ' + t.sinRevisar + ' ' + plural(t.sinRevisar, 'producto', 'productos') + ' por revisar.');
   var items = inv.items.slice().sort(cmpRow).map(function (it) { return { it: it, c: calcItem(it) }; });
   var sold = items.filter(function (x) { return x.c.v > 0; });
@@ -1399,7 +1459,7 @@ function resumenTexto(inv) {
   var left = items.filter(function (x) { return x.c.quedan > 0; });
   if (left.length) {
     L.push(''); L.push('*Sobrantes*');
-    left.forEach(function (x) { var bd = breakdown(x.c.quedan, x.c.pc); L.push('• ' + nm(x.it) + ': ' + x.c.quedan + (bd ? ' (' + bd + ')' : '')); });
+    left.forEach(function (x) { var bd = breakdown(x.c.quedan, x.c.pc); var vs = valorQty(x.c, x.c.quedan); L.push('• ' + nm(x.it) + ': ' + x.c.quedan + (bd ? ' (' + bd + ')' : '') + (vs.falta ? '' : ' = ' + money(vs.v))); });
   }
   var agot = items.filter(function (x) { return x.c.rev && x.c.quedan === 0; });
   if (agot.length) { L.push(''); L.push('*Se agotaron, hay que reponer:* ' + agot.map(function (x) { return nm(x.it); }).join(', ')); }
@@ -1465,6 +1525,32 @@ function pdfInv(inv) {
   var sumIni = inv.items.reduce(function (a, it) { return a + it.inicial; }, 0);
   hline(y, M, R, 1, 0.3);
   txt(M + 6, y - 15, 'Total', 10.5, true); txtR(cHab, y - 15, int(sumIni), 10.5, true); txtR(cVen, y - 15, int(t.vendidas), 10.5, true); txtR(cSob, y - 15, int(t.sobrantes), 10.5, true); txtR(R - 6, y - 15, money(t.ingreso), 10.5, true);
+  /* Segunda tabla: el mismo detalle pero en dinero */
+  y -= 15 + 34;
+  if (y < 150) newPage();
+  txt(M, y - 12, 'Detalle en dinero', 12, true); y -= 22;
+  txt(M, y - 9, 'A precio de venta: cada caja completa al precio de la caja y las sueltas al precio individual.', 8.5, false, 0.4); y -= 20;
+  var d1 = 392, d2 = 470, d3 = R - 6;
+  var tHead2 = function () {
+    cur.push('q 0.93 g ' + f2(M) + ' ' + f2(y - 15) + ' ' + f2(R - M) + ' 19 re f Q');
+    txt(M + 6, y - 9, 'Producto', 9, true, 0.25); txtR(d1, y - 9, 'Había', 9, true, 0.25); txtR(d2, y - 9, 'Vendido', 9, true, 0.25); txtR(d3, y - 9, 'Sobran', 9, true, 0.25);
+    y -= 24;
+  };
+  tHead2();
+  inv.items.slice().sort(cmpRow).forEach(function (it) {
+    var c = calcItem(it), vv = valorItem(c);
+    if (y - 19 < 70) { newPage(); tHead2(); }
+    txt(M + 6, y - 10, fit(it.nombre + (it.presentacion ? ' · ' + it.presentacion : ''), 46), 9.5, false);
+    txtR(d1, y - 10, vv.habFalta ? '-' : money(vv.hab), 9.5, false);
+    txtR(d2, y - 10, c.falta && c.ingreso === 0 ? '-' : money(c.ingreso), 9.5, false);
+    txtR(d3, y - 10, vv.sobFalta ? '-' : money(vv.sob), 9.5, false);
+    hline(y - 16, M, R, 0.5, 0.88);
+    y -= 19;
+  });
+  if (y - 30 < 60) newPage();
+  hline(y, M, R, 1, 0.3);
+  txt(M + 6, y - 15, 'Total', 10.5, true); txtR(d1, y - 15, money(t.valHab), 10.5, true); txtR(d2, y - 15, money(t.ingreso), 10.5, true); txtR(d3, y - 15, money(t.valSob), 10.5, true);
+  if (t.sinPrecioVal > 0) txt(M + 6, y - 32, 'Falta el precio en ' + t.sinPrecioVal + ' ' + plural(t.sinPrecioVal, 'producto', 'productos') + '; su dinero no está sumado en los totales.', 8.5, false, 0.4);
   pages.forEach(function (p, i) {
     cur = p;
     hline(44, M, R, 0.5, 0.8);
@@ -1551,6 +1637,16 @@ var actions = {
   solo: function (t) { ui.solo = !ui.solo; t.setAttribute('aria-pressed', String(ui.solo)); applyFilter(); },
   inc: function (t) { stepCant(t.dataset.pid, t.dataset.u, 1); },
   dec: function (t) { stepCant(t.dataset.pid, t.dataset.u, -1); },
+  detalle: function (t) {
+    var inv = curInv(); if (!inv) return;
+    ui.detalle = t.dataset.v === 'dinero' ? 'dinero' : 'cant';
+    try { localStorage.setItem(LS_DETALLE, ui.detalle); } catch (e) {}
+    var el = $('#detalle');
+    if (!el) { render(); return; }
+    var tmp = document.createElement('div'); tmp.innerHTML = detalleCard(inv, invTotals(inv));
+    el.replaceWith(tmp.firstChild);
+    var b = $('#detalle [data-v="' + ui.detalle + '"]'); if (b) { try { b.focus({ preventScroll: true }); } catch (e) {} }
+  },
   modo: function (t) {
     var inv = curInv(); if (!inv || inv.modo === t.dataset.m) return;
     inv.modo = t.dataset.m; touchInv(inv); render();
