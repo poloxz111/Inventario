@@ -1508,7 +1508,46 @@ function pdfInv(inv) {
   if (cats.length) { txt(M, y - 10, 'Por tipo: ' + cats.map(function (c) { return c + ' ' + money(t.porCat[c]); }).join('   ·   '), 10, false, 0.25); y -= 20; }
   if (t.sinPrecio > 0) { txt(M, y - 10, 'Atención: falta el precio en ' + t.sinPrecio + ' ' + plural(t.sinPrecio, 'producto', 'productos') + '; su dinero no está sumado.', 10, true, 0.25); y -= 20; }
   if (t.sinRevisar > 0) { txt(M, y - 10, 'Atención: faltan ' + t.sinRevisar + ' ' + plural(t.sinRevisar, 'producto', 'productos') + ' por revisar.', 10, true, 0.25); y -= 20; }
+  /* Sobrantes para el siguiente inventario (igual que en la pantalla) */
+  var itemsC = inv.items.map(function (it) { return { it: it, c: calcItem(it) }; });
+  var sobL = itemsC.filter(function (x) { return x.c.quedan > 0; }).sort(function (a, b) { return cmpRow(a.it, b.it); });
+  var agotL = itemsC.filter(function (x) { return x.c.rev && x.c.quedan === 0; }).sort(function (a, b) { return cmpRow(a.it, b.it); });
+  var wW = function (s, size) { var w = 0; for (var i = 0; i < s.length; i++) { var ch = s[i]; w += (ch === ' ' || ch === ',' || ch === '.') ? 278 : (ch >= 'A' && ch <= 'Z') ? 700 : 540; } return w * size / 1000; };
+  var wrap = function (s, size, maxW) {
+    var lines = [], line = '';
+    s.split(' ').forEach(function (w) {
+      var tryL = line ? line + ' ' + w : w;
+      if (line && wW(tryL, size) > maxW) { lines.push(line); line = w; } else line = tryL;
+    });
+    if (line) lines.push(line);
+    return lines;
+  };
+  var sobHead = function (cont) { txt(M, y - 12, 'Sobrantes para el siguiente inventario' + (cont ? ' (sigue)' : ''), 12, true); y -= 24; };
   y -= 6;
+  if (y < 120) newPage();
+  sobHead(false);
+  if (sobL.length) {
+    sobL.forEach(function (x) {
+      var bd = breakdown(x.c.quedan, x.it.porCaja), need = bd ? 29 : 19;
+      if (y - need < 70) { newPage(); sobHead(true); }
+      txt(M + 6, y - 10, fit(x.it.nombre + (x.it.presentacion ? ' · ' + x.it.presentacion : ''), 70), 9.5, false);
+      txtR(R - 6, y - 10, int(x.c.quedan), 9.5, true);
+      if (bd) txtR(R - 6, y - 21, bd, 8, false, 0.4);
+      hline(y - need + 3, M, R, 0.5, 0.88);
+      y -= need;
+    });
+  } else { txt(M + 6, y - 10, 'No sobró nada. Todo se vendió.', 9.5, false, 0.35); y -= 22; }
+  if (agotL.length) {
+    y -= 6;
+    if (y - 44 < 70) newPage();
+    txt(M, y - 10, 'Se agotaron, hay que reponer:', 9.5, true, 0.25); y -= 17;
+    wrap(agotL.map(function (x) { return x.it.nombre + (x.it.presentacion ? ' ' + x.it.presentacion : ''); }).join(', ') + '.', 9.5, R - M).forEach(function (ln) {
+      if (y - 14 < 70) newPage();
+      txt(M, y - 10, ln, 9.5, false, 0.25); y -= 14;
+    });
+  }
+  y -= 14;
+  if (y < 150) newPage();
   txt(M, y - 12, 'Detalle por producto', 12, true); y -= 24;
   tHead();
   inv.items.slice().sort(cmpRow).forEach(function (it) {
